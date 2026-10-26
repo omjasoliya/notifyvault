@@ -4,9 +4,13 @@
     <!-- No INTERNET permission on purpose: nothing can leave the device. -->
 
     <application
+        android:name=".NotifyApp"
         android:allowBackup="false"
-        android:label="NotifyVault"
-        android:theme="@android:style/Theme.DeviceDefault.Light">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.NotifyVault">
 
         <activity
             android:name=".MainActivity"

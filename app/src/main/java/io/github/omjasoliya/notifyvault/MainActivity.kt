@@ -1,76 +1,103 @@
 package io.github.omjasoliya.notifyvault
 
-import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
-import android.text.Editable
-import android.text.TextWatcher
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.ThumbnailUtils
-import android.util.LruCache
-import android.util.Size
-import android.view.Gravity
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
-import android.view.ViewGroup
 import android.webkit.MimeTypeMap
-import android.widget.BaseAdapter
-import android.widget.Button
-import android.widget.EditText
 import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ListView
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.core.widget.doAfterTextChanged
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.chip.ChipGroup
+import com.google.android.material.color.MaterialColors
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
+import com.google.android.material.textfield.TextInputEditText
 import java.io.File
-import java.text.DateFormat
-import java.util.Date
 import java.util.concurrent.TimeUnit
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
 
-    private lateinit var status: TextView
-    private lateinit var list: ListView
-    private lateinit var search: EditText
-    private var shown: List<Entry> = emptyList()
+    private lateinit var adapter: EntryAdapter
+    private lateinit var search: TextInputEditText
+    private lateinit var swipe: SwipeRefreshLayout
+    private lateinit var emptyView: TextView
+    private var kind = Kind.ALL
+
+    private val pickTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            Prefs.setTree(this, uri.toString())
+            refresh()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        setSupportActionBar(findViewById<MaterialToolbar>(R.id.toolbar))
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(32, 32, 32, 32)
+        adapter = EntryAdapter(onClick = ::onEntryClick, onLongClick = ::confirmDeleteOne)
+        findViewById<RecyclerView>(R.id.list).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            adapter = this@MainActivity.adapter
         }
-        status = TextView(this)
-        root.addView(status)
+        emptyView = findViewById(R.id.emptyView)
 
-        root.addView(button("1. Allow notification access") {
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-        })
-        root.addView(button("2. Choose WhatsApp media folder") { pickFolder() })
-        root.addView(button("Delete everything now") {
-            Purge.everything(this)
+        search = findViewById(R.id.search)
+        search.doAfterTextChanged { refresh() }
+
+        findViewById<ChipGroup>(R.id.chips).setOnCheckedStateChangeListener { _, ids ->
+            kind = when (ids.firstOrNull()) {
+                R.id.chipMessages -> Kind.MESSAGE
+                R.id.chipPhotos -> Kind.PHOTO
+                R.id.chipVideos -> Kind.VIDEO
+                R.id.chipFiles -> Kind.FILE
+                else -> Kind.ALL
+            }
             refresh()
-        })
+        }
 
-        search = EditText(this).apply { hint = "Search" }
-        search.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) = refresh()
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-        })
-        root.addView(search)
+        findViewById<MaterialButton>(R.id.notifButton).setOnClickListener {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }
+        findViewById<MaterialButton>(R.id.folderButton).setOnClickListener {
+            pickTree.launch(Uri.parse(WHATSAPP_MEDIA_URI))
+        }
+        findViewById<MaterialButton>(R.id.batteryButton).setOnClickListener {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
 
-        list = ListView(this)
-        list.setOnItemClickListener { _, _, pos, _ -> shown.getOrNull(pos)?.path?.let(::openFile) }
-        root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-
-        setContentView(root)
+        swipe = findViewById(R.id.swipe)
+        swipe.setOnRefreshListener {
+            Thread {
+                MediaScanner.scan(applicationContext)
+                runOnUiThread {
+                    refresh()
+                    swipe.isRefreshing = false
+                }
+            }.start()
+        }
 
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "maintenance",
@@ -84,107 +111,119 @@ class MainActivity : Activity() {
         refresh()
     }
 
-    private fun button(label: String, onClick: () -> Unit) =
-        Button(this).apply {
-            text = label
-            setOnClickListener { onClick() }
-        }
-
-    private fun pickFolder() {
-        val hint = Uri.parse(
-            "content://com.android.externalstorage.documents/document/primary%3AAndroid%2Fmedia%2Fcom.whatsapp%2FWhatsApp%2FMedia"
-        )
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra("android.provider.extra.INITIAL_URI", hint)
-        @Suppress("DEPRECATION")
-        startActivityForResult(intent, REQ_TREE)
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.main, menu)
+        return true
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        val uri = data?.data
-        if (requestCode == REQ_TREE && resultCode == RESULT_OK && uri != null) {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            Prefs.setTree(this, uri.toString())
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        when (item.itemId) {
+            R.id.action_retention -> chooseRetention()
+            R.id.action_cap -> chooseCap()
+            R.id.action_privacy -> MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.privacy_title)
+                .setMessage(R.string.privacy_body)
+                .setPositiveButton(R.string.ok, null)
+                .show()
+            R.id.action_delete_all -> MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.delete_all_title)
+                .setMessage(R.string.delete_all_body)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.delete) { _, _ ->
+                    Purge.everything(this)
+                    refresh()
+                }
+                .show()
+            else -> return super.onOptionsItemSelected(item)
         }
+        return true
     }
 
     private fun refresh() {
-        val listenerOn = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        val notifOk = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
             ?.contains(packageName) == true
-        val folderOn = Prefs.treeUri(this) != null
-        status.text = "Notification access: ${if (listenerOn) "on" else "OFF"}\n" +
-            "Media folder: ${if (folderOn) "set" else "NOT set"}\n" +
-            "Kept for $RETENTION_DAYS days, media capped at ${MEDIA_CAP_BYTES / (1024 * 1024 * 1024)} GB. Stored only on this phone."
+        val folderOk = Prefs.treeUri(this) != null
+        val batteryOk = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
 
-        shown = Db.get(this).entries(search.text.toString())
-        val df = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-        list.adapter = EntryAdapter(shown, df)
+        setRow(R.id.notifIcon, R.id.notifText, R.id.notifButton, notifOk, R.string.notif_ok, R.string.notif_missing)
+        setRow(R.id.folderIcon, R.id.folderText, R.id.folderButton, folderOk, R.string.folder_ok, R.string.folder_missing)
+        setRow(R.id.batteryIcon, R.id.batteryText, R.id.batteryButton, batteryOk, R.string.battery_ok, R.string.battery_missing)
+
+        val setupDone = notifOk && folderOk
+        findViewById<MaterialCardView>(R.id.setupCard).visibility = if (setupDone && batteryOk) View.GONE else View.VISIBLE
+        findViewById<TextView>(R.id.statusLine).text = getString(
+            R.string.status_line, Prefs.retentionDays(this), Prefs.capGb(this),
+        )
+
+        val query = search.text?.toString().orEmpty()
+        val items = Db.get(this).entries(query, kind)
+        adapter.submitList(items)
+        emptyView.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
+        emptyView.setText(
+            when {
+                query.isNotEmpty() || kind != Kind.ALL -> R.string.empty_search
+                !setupDone -> R.string.empty_setup
+                else -> R.string.empty_list
+            }
+        )
     }
 
-    private fun thumb(path: String): Bitmap? {
-        val file = File(path)
-        return try {
-            if (file.extension.lowercase() in VIDEO_EXT) {
-                ThumbnailUtils.createVideoThumbnail(file, Size(THUMB, THUMB), null)
-            } else {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(path, bounds)
-                var sample = 1
-                while (bounds.outWidth / (sample * 2) >= THUMB && bounds.outHeight / (sample * 2) >= THUMB) sample *= 2
-                BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
-            }
-        } catch (e: Exception) {
-            null
+    private fun setRow(iconId: Int, textId: Int, buttonId: Int, ok: Boolean, okText: Int, missingText: Int) {
+        val icon = findViewById<ImageView>(iconId)
+        icon.setImageResource(if (ok) R.drawable.ic_check_circle else R.drawable.ic_warning)
+        val attr = if (ok) androidx.appcompat.R.attr.colorPrimary else com.google.android.material.R.attr.colorError
+        icon.imageTintList = ColorStateList.valueOf(MaterialColors.getColor(icon, attr))
+        findViewById<TextView>(textId).setText(if (ok) okText else missingText)
+        findViewById<View>(buttonId).visibility = if (ok) View.GONE else View.VISIBLE
+    }
+
+    private fun onEntryClick(e: Entry) {
+        if (e.kind == Kind.MESSAGE) {
+            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("message", e.body))
+            Snackbar.make(findViewById(android.R.id.content), R.string.copied, Snackbar.LENGTH_SHORT).show()
+        } else {
+            e.path?.let(::openFile)
         }
     }
 
-    private inner class EntryAdapter(private val items: List<Entry>, private val df: DateFormat) : BaseAdapter() {
-        private val cache = LruCache<String, Bitmap>(60)
-
-        override fun getCount() = items.size
-        override fun getItem(position: Int) = items[position]
-        override fun getItemId(position: Int) = position.toLong()
-
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val row = convertView as? LinearLayout ?: LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, 16, 0, 16)
-                addView(ImageView(this@MainActivity).apply {
-                    layoutParams = LinearLayout.LayoutParams(THUMB, THUMB)
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                })
-                addView(TextView(this@MainActivity).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    setPadding(24, 0, 0, 0)
-                })
+    private fun confirmDeleteOne(e: Entry) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.delete_one_title)
+            .setMessage(R.string.delete_one_body)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.delete) { _, _ ->
+                Db.get(this).delete(e)?.let { File(it).delete() }
+                refresh()
             }
-            val img = row.getChildAt(0) as ImageView
-            val txt = row.getChildAt(1) as TextView
-            val e = items[position]
-            txt.text = "${df.format(Date(e.ts))}\n${e.title}${if (e.body.isNotEmpty()) ": " + e.body else ""}"
+            .show()
+    }
 
-            val path = e.path
-            img.tag = path
-            img.setImageDrawable(null)
-            if (path == null) {
-                img.visibility = View.GONE
-            } else {
-                img.visibility = View.VISIBLE
-                val cached = cache.get(path)
-                if (cached != null) {
-                    img.setImageBitmap(cached)
-                } else {
-                    Thread {
-                        val bmp = thumb(path) ?: return@Thread
-                        cache.put(path, bmp)
-                        runOnUiThread { if (img.tag == path) img.setImageBitmap(bmp) }
-                    }.start()
-                }
+    private fun chooseRetention() {
+        val days = intArrayOf(1, 3, 7, 14, 30)
+        val labels = days.map { resources.getQuantityString(R.plurals.days, it, it) }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.menu_retention)
+            .setSingleChoiceItems(labels, days.indexOf(Prefs.retentionDays(this)).coerceAtLeast(0)) { d, i ->
+                Prefs.setRetentionDays(this, days[i])
+                Thread { Purge.run(applicationContext) }.start()
+                d.dismiss()
+                refresh()
             }
-            return row
-        }
+            .show()
+    }
+
+    private fun chooseCap() {
+        val gb = intArrayOf(1, 2, 5, 10)
+        val labels = gb.map { "$it GB" }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.menu_cap)
+            .setSingleChoiceItems(labels, gb.indexOf(Prefs.capGb(this)).coerceAtLeast(0)) { d, i ->
+                Prefs.setCapGb(this, gb[i])
+                Thread { Purge.run(applicationContext) }.start()
+                d.dismiss()
+                refresh()
+            }
+            .show()
     }
 
     private fun openFile(path: String) {
@@ -192,16 +231,19 @@ class MainActivity : Activity() {
         if (!file.exists()) return
         val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase()) ?: "*/*"
-        startActivity(
-            Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, mime)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        )
+        try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, mime)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            )
+        } catch (e: ActivityNotFoundException) {
+            Snackbar.make(findViewById(android.R.id.content), R.string.no_viewer, Snackbar.LENGTH_SHORT).show()
+        }
     }
 
     companion object {
-        private const val REQ_TREE = 1
-        private const val THUMB = 220
-        private val VIDEO_EXT = setOf("mp4", "3gp", "mkv", "webm", "mov")
+        private const val WHATSAPP_MEDIA_URI =
+            "content://com.android.externalstorage.documents/document/primary%3AAndroid%2Fmedia%2Fcom.whatsapp%2FWhatsApp%2FMedia"
     }
 }

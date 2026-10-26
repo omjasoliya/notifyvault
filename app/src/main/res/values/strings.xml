@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NotifyVault</string>
+    <string name="setup_title">Finish setup</string>
+    <string name="setup_subtitle">NotifyVault needs two permissions to keep deleted WhatsApp messages and files.</string>
+    <string name="notif_ok">Notification access is on</string>
+    <string name="notif_missing">Notification access is off</string>
+    <string name="folder_ok">WhatsApp media folder is set</string>
+    <string name="folder_missing">WhatsApp media folder not chosen</string>
+    <string name="battery_ok">Battery optimisation is off for NotifyVault</string>
+    <string name="battery_missing">Recommended: stop the system from pausing NotifyVault</string>
+    <string name="action_allow">Allow</string>
+    <string name="action_choose">Choose</string>
+    <string name="action_fix">Fix</string>
+    <string name="search_hint">Search messages and files</string>
+    <string name="chip_all">All</string>
+    <string name="chip_messages">Messages</string>
+    <string name="chip_photos">Photos</string>
+    <string name="chip_videos">Videos</string>
+    <string name="chip_files">Files</string>
+    <string name="menu_retention">Keep items for…</string>
+    <string name="menu_cap">Media storage limit…</string>
+    <string name="menu_delete_all">Delete everything</string>
+    <string name="menu_privacy">Privacy</string>
+    <string name="empty_setup">Nothing saved yet. Finish the setup above, then new WhatsApp messages will appear here.</string>
+    <string name="empty_list">Nothing saved yet. New WhatsApp messages and files will appear here.</string>
+    <string name="empty_search">No results for this search.</string>
+    <string name="delete_all_title">Delete everything?</string>
+    <string name="delete_all_body">All saved messages and files are removed from this phone. This cannot be undone.</string>
+    <string name="delete_one_title">Delete this item?</string>
+    <string name="delete_one_body">It is removed from NotifyVault only. WhatsApp is not affected.</string>
+    <string name="delete">Delete</string>
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    <string name="copied">Message copied</string>
+    <string name="no_viewer">No app can open this file</string>
+    <string name="privacy_title">Privacy</string>
+    <string name="privacy_body">Everything stays on this phone. The app has no internet permission, so nothing can be uploaded. Items are deleted automatically after the number of days you choose, and you can delete everything at any time.</string>
+    <string name="photo">Photo</string>
+    <string name="video">Video</string>
+    <string name="file">File</string>
+    <string name="cd_media">Saved WhatsApp media</string>
+    <string name="cd_status">Status</string>
+    <string name="search_icon_cd">Search</string>
+    <string name="status_line">Saving WhatsApp only · kept for %1$d days · media limit %2$d GB · stays on this phone</string>
+    <plurals name="days">
+        <item quantity="one">%d day</item>
+        <item quantity="other">%d days</item>
+    </plurals>
+</resources>
