@@ -7,11 +7,19 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.ThumbnailUtils
+import android.util.LruCache
+import android.util.Size
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.MimeTypeMap
-import android.widget.ArrayAdapter
+import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -111,11 +119,72 @@ class MainActivity : Activity() {
 
         shown = Db.get(this).entries(search.text.toString())
         val df = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-        list.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_list_item_1,
-            shown.map { "${df.format(Date(it.ts))}\n${it.title}${if (it.body.isNotEmpty()) ": " + it.body else ""}" },
-        )
+        list.adapter = EntryAdapter(shown, df)
+    }
+
+    private fun thumb(path: String): Bitmap? {
+        val file = File(path)
+        return try {
+            if (file.extension.lowercase() in VIDEO_EXT) {
+                ThumbnailUtils.createVideoThumbnail(file, Size(THUMB, THUMB), null)
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(path, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= THUMB && bounds.outHeight / (sample * 2) >= THUMB) sample *= 2
+                BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private inner class EntryAdapter(private val items: List<Entry>, private val df: DateFormat) : BaseAdapter() {
+        private val cache = LruCache<String, Bitmap>(60)
+
+        override fun getCount() = items.size
+        override fun getItem(position: Int) = items[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val row = convertView as? LinearLayout ?: LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 16, 0, 16)
+                addView(ImageView(this@MainActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(THUMB, THUMB)
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                })
+                addView(TextView(this@MainActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    setPadding(24, 0, 0, 0)
+                })
+            }
+            val img = row.getChildAt(0) as ImageView
+            val txt = row.getChildAt(1) as TextView
+            val e = items[position]
+            txt.text = "${df.format(Date(e.ts))}\n${e.title}${if (e.body.isNotEmpty()) ": " + e.body else ""}"
+
+            val path = e.path
+            img.tag = path
+            img.setImageDrawable(null)
+            if (path == null) {
+                img.visibility = View.GONE
+            } else {
+                img.visibility = View.VISIBLE
+                val cached = cache.get(path)
+                if (cached != null) {
+                    img.setImageBitmap(cached)
+                } else {
+                    Thread {
+                        val bmp = thumb(path) ?: return@Thread
+                        cache.put(path, bmp)
+                        runOnUiThread { if (img.tag == path) img.setImageBitmap(bmp) }
+                    }.start()
+                }
+            }
+            return row
+        }
     }
 
     private fun openFile(path: String) {
@@ -132,5 +201,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_TREE = 1
+        private const val THUMB = 220
+        private val VIDEO_EXT = setOf("mp4", "3gp", "mkv", "webm", "mov")
     }
 }
